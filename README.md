@@ -5,8 +5,13 @@ by Fatah At-Thariq
 
 ## Postman
 
-`Go Mini Project.postman_collection.json`
+File postman saya sediakan agar mempermudah
+"Go Mini Project.postman_collection.json"
 
 ## Run
 
 `go run main.go`
+
+## Build
+
+`go build`
