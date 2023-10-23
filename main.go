@@ -8,9 +8,12 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/dgrijalva/jwt-go"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type User struct {
@@ -28,13 +31,21 @@ type Hobby struct {
 	HobbyName string `json:"hobbyName"`
 }
 
-type Message struct {
-	Message string `json:"Message"`
-	Data    []User `json:"Data"`
+type UserLogin struct {
+	Id       string `json:"id"`
+	UserId   string `json:"userId"`
+	Username string `json:"username"`
+	Password []byte `json:"password"`
+}
+
+type LoginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 var Users []User
 var Hobbies []Hobby
+var Login []UserLogin
 
 func main() {
 
@@ -50,6 +61,14 @@ func main() {
 	Hobbies = []Hobby{
 		{Id: "1", UserId: "1", HobbyName: "Main game"},
 		{Id: "2", UserId: "1", HobbyName: "Nonton anime"},
+	}
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("fatah123321"), bcrypt.DefaultCost)
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+	Login = []UserLogin{
+		{Id: "1", UserId: "1", Username: "fatah123", Password: hashedPassword},
 	}
 
 	// if no data then insert dummy
@@ -67,6 +86,12 @@ func main() {
 				log.Fatal(err)
 			}
 		}
+		for _, data := range Login {
+			_, err := db.Exec(`INSERT INTO user_logins(userId, username, password) VALUES (?,?,?)`, data.UserId, data.Username, data.Password)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
 	}
 
 	fmt.Println("started on port 10000")
@@ -78,6 +103,7 @@ func handleRequest() {
 	// acts as route
 
 	myRouter := mux.NewRouter().StrictSlash(true)
+	myRouter.HandleFunc("/api/login", login).Methods("POST")
 	myRouter.HandleFunc("/api/user", createUser).Methods("POST")        // create
 	myRouter.HandleFunc("/api/user", getUsers)                          // all
 	myRouter.HandleFunc("/api/user/{id}", updateUser).Methods("PATCH")  // update
@@ -102,6 +128,9 @@ func dbConn() (db *sql.DB) {
 
 func dropTable(db *sql.DB) {
 	if _, err := db.Exec("DROP TABLE IF EXISTS `hobbies`"); err != nil {
+		log.Fatal(err)
+	}
+	if _, err := db.Exec("DROP TABLE IF EXISTS `user_logins`"); err != nil {
 		log.Fatal(err)
 	}
 	if _, err := db.Exec("DROP TABLE IF EXISTS `users`"); err != nil {
@@ -138,6 +167,21 @@ func createTable(db *sql.DB) {
 	if _, err := db.Exec(query); err != nil {
 		log.Fatal(err)
 	}
+
+	query = `
+		CREATE TABLE user_logins (
+			id INT AUTO_INCREMENT,
+			userId INT,
+			username VARCHAR(255),
+			password VARCHAR(255),
+			PRIMARY KEY(id),
+			FOREIGN KEY (userId) REFERENCES users(id)
+			ON DELETE CASCADE
+		);
+	`
+	if _, err := db.Exec(query); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func getCount(db *sql.DB) (count int, err error) {
@@ -151,11 +195,51 @@ func getCount(db *sql.DB) (count int, err error) {
 	return count, nil
 }
 
-func generateToken() {
+func createToken(username string) (string, error) {
+	token := jwt.New(jwt.SigningMethodHS256)
+	claims := token.Claims.(jwt.MapClaims)
+	claims["username"] = username
+	claims["exp"] = time.Now().Add(time.Hour * 12).Unix() // Token expiration time
 
+	// Sign the token with a secret key
+	tokenString, err := token.SignedString([]byte("this-is-secret"))
+	if err != nil {
+		return "", err
+	}
+	return tokenString, nil
 }
 
 func login(w http.ResponseWriter, r *http.Request) {
+	db := dbConn()
+	reqBody, _ := io.ReadAll(r.Body)
+	var userCred LoginRequest
+	json.Unmarshal(reqBody, &userCred)
+
+	username := userCred.Username
+	password := userCred.Password
+
+	var storedPassword string
+	err := db.QueryRow("SELECT password FROM user_logins WHERE username = ?", username).Scan(&storedPassword)
+	if err != nil {
+		// fmt.Println(err)
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	err = bcrypt.CompareHashAndPassword([]byte(storedPassword), []byte(password))
+	if err != nil {
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	token, errToken := createToken(username)
+	if errToken != nil {
+		http.Error(w, "Token creation failed", http.StatusUnauthorized)
+		return
+	}
+
+	// Authentication successful
+	json.NewEncoder(w).Encode(token)
 
 }
 
@@ -352,4 +436,31 @@ func deleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode("User dihapus")
+}
+
+func authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenString := r.Header.Get("Authorization")
+		if tokenString == "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			// Validate the token's signing method and return the secret key
+			return []byte("this-is-secret"), nil
+		})
+
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		if token.Valid {
+			// Token is valid, continue with the next handler
+			next.ServeHTTP(w, r)
+		} else {
+			w.WriteHeader(http.StatusUnauthorized)
+		}
+	})
 }
