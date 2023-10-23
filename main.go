@@ -46,6 +46,7 @@ type LoginRequest struct {
 var Users []User
 var Hobbies []Hobby
 var Login []UserLogin
+var jwtSecret = []byte("this-is-secret")
 
 func main() {
 
@@ -104,11 +105,11 @@ func handleRequest() {
 
 	myRouter := mux.NewRouter().StrictSlash(true)
 	myRouter.HandleFunc("/api/login", login).Methods("POST")
-	myRouter.HandleFunc("/api/user", createUser).Methods("POST")        // create
-	myRouter.HandleFunc("/api/user", getUsers)                          // all
-	myRouter.HandleFunc("/api/user/{id}", updateUser).Methods("PATCH")  // update
-	myRouter.HandleFunc("/api/user/{id}", deleteUser).Methods("DELETE") // delete
-	myRouter.HandleFunc("/api/user/{id}", getUserDetail)                // detail
+	myRouter.HandleFunc("/api/user", JWTMiddleware(createUser)).Methods("POST")        // create
+	myRouter.HandleFunc("/api/user", JWTMiddleware(getUsers))                          // all
+	myRouter.HandleFunc("/api/user/{id}", JWTMiddleware(updateUser)).Methods("PATCH")  // update
+	myRouter.HandleFunc("/api/user/{id}", JWTMiddleware(deleteUser)).Methods("DELETE") // delete
+	myRouter.HandleFunc("/api/user/{id}", JWTMiddleware(getUserDetail))                // detail
 
 	// replace nil with the new router
 	log.Fatal(http.ListenAndServe(":10000", myRouter))
@@ -202,7 +203,7 @@ func createToken(username string) (string, error) {
 	claims["exp"] = time.Now().Add(time.Hour * 12).Unix() // Token expiration time
 
 	// Sign the token with a secret key
-	tokenString, err := token.SignedString([]byte("this-is-secret"))
+	tokenString, err := token.SignedString(jwtSecret)
 	if err != nil {
 		return "", err
 	}
@@ -343,6 +344,14 @@ func updateUser(w http.ResponseWriter, r *http.Request) {
 
 	db := dbConn()
 
+	// check if id exists
+	var userCheck User
+	if err := db.QueryRow(`SELECT * FROM users WHERE id=?`, targetId).Scan(&userCheck.Id, &userCheck.Name, &userCheck.Age, &userCheck.Address, &userCheck.Phone); err != nil {
+		json.NewEncoder(w).Encode("Error user tidak ditemukan")
+		return
+	}
+	// fmt.Println(userCheck)
+
 	// update user
 	_, err := db.Exec(`UPDATE users SET name=?,age=?,address=?,phone=? WHERE id=?`, user.Name, user.Age, user.Address, user.Phone, targetId)
 	if err != nil {
@@ -438,29 +447,33 @@ func deleteUser(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode("User dihapus")
 }
 
-func authMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func JWTMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		tokenString := r.Header.Get("Authorization")
 		if tokenString == "" {
 			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode("No token provided")
 			return
 		}
 
+		tokenString = strings.TrimPrefix(tokenString, "Bearer ")
+
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-			// Validate the token's signing method and return the secret key
-			return []byte("this-is-secret"), nil
+			return jwtSecret, nil
 		})
 
 		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
+			// fmt.Println(err)
+			json.NewEncoder(w).Encode("Token validation failed")
 			return
 		}
 
 		if token.Valid {
-			// Token is valid, continue with the next handler
-			next.ServeHTTP(w, r)
+			next(w, r)
 		} else {
 			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode("Token is not valid")
 		}
-	})
+	}
 }
