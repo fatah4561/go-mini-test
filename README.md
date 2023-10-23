@@ -1,6 +1,6 @@
 # go-mini-test
 
-Go mini project test
+Go REST API mini project test
 by Fatah At-Thariq
 
 ## Postman
