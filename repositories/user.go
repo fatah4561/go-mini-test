@@ -82,6 +82,23 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(reqBody, &user)
 	// json.NewEncoder(w).Encode(user)
 
+	if user.Name == "" {
+		json.NewEncoder(w).Encode("Error name is required")
+		return
+	}
+	if user.Age == 0 {
+		json.NewEncoder(w).Encode("Error age is required")
+		return
+	}
+	if user.Address == "" {
+		json.NewEncoder(w).Encode("Error address is required")
+		return
+	}
+	if user.Phone == "" {
+		json.NewEncoder(w).Encode("Error address is required")
+		return
+	}
+
 	db := sqlstore.DbConn()
 
 	// insert user
@@ -111,6 +128,23 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 	var user models.User
 	json.Unmarshal(reqBody, &user)
 	// json.NewEncoder(w).Encode(user)
+
+	if user.Name == "" {
+		json.NewEncoder(w).Encode("Error name is required")
+		return
+	}
+	if user.Age == 0 {
+		json.NewEncoder(w).Encode("Error age is required")
+		return
+	}
+	if user.Address == "" {
+		json.NewEncoder(w).Encode("Error address is required")
+		return
+	}
+	if user.Phone == "" {
+		json.NewEncoder(w).Encode("Error address is required")
+		return
+	}
 
 	db := sqlstore.DbConn()
 
